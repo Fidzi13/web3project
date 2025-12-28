@@ -1,82 +1,109 @@
 <?php
-// ================= CONFIG =================
-$allowedCountries = ['US','CA','GB','AU','DE'];
-$maxClicksNoResult = 7;     // toleransi
-$delayMs = 1500;            // redirect delay
-$dataDir = __DIR__.'/data/';
+// ===================================================
+// CLOUDflare REAL IP (WAJIB)
+// ===================================================
+if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+    $_SERVER['REMOTE_ADDR'] = $_SERVER['HTTP_CF_CONNECTING_IP'];
+}
+
+// ===================================================
+// CONFIG
+// ===================================================
+$allowedCountries = ['US','CA','GB','AU','DE']; // GEO allowlist
+$maxClicksNoResult = 7;     // toleransi klik tanpa hasil (proxy EPC)
+$delayMs = 1500;            // delay redirect (ms)
+
+$dataDir   = __DIR__.'/data/';
 $statsFile = $dataDir.'stats.json';
 $blockFile = $dataDir.'blocked_ips.json';
 $linksFile = $dataDir.'smartlinks.json';
 
 // init files
-foreach ([$statsFile=>'{}',$blockFile=>'[]'] as $f=>$init) {
-  if (!file_exists($f)) file_put_contents($f,$init);
-}
+if (!file_exists($statsFile)) file_put_contents($statsFile, '{}');
+if (!file_exists($blockFile)) file_put_contents($blockFile, '[]');
 if (!file_exists($linksFile)) die('No smartlinks');
 
-// ================ BASIC FILTERS =================
-// UA bot
+// ===================================================
+// BASIC FILTERS
+// ===================================================
+// User-Agent bot filter
 $ua = strtolower($_SERVER['HTTP_USER_AGENT'] ?? '');
 $bots = ['bot','crawl','spider','facebook','telegram','whatsapp','curl','wget','python','java','monitor'];
-foreach ($bots as $b) if (strpos($ua,$b)!==false) exit;
-if (trim($ua)==='') exit;
+foreach ($bots as $b) if (strpos($ua, $b) !== false) exit;
+if (trim($ua) === '') exit;
 
-// IP basic
+// IP validation (private/reserved)
 $ip = $_SERVER['REMOTE_ADDR'] ?? '';
-if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE|FILTER_FLAG_NO_RES_RANGE)) exit;
+if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) exit;
 
-// blocklist
+// Blocked IP list
 $blocked = json_decode(file_get_contents($blockFile), true);
 if (in_array($ip, $blocked)) exit;
 
-// mobile only
+// Mobile only
 if (!preg_match('/iphone|android|ipad|ipod|mobile/i', $ua)) exit;
 
-// GEO + ASN (ipapi – gratis, rate‑limited)
-$info = @json_decode(@file_get_contents("https://ipapi.co/{$ip}/json/"), true);
-if (empty($info['country']) || !in_array($info['country'], $allowedCountries)) exit;
+// ===================================================
+// GEO FILTER (Cloudflare Header)
+// ===================================================
+$country = $_SERVER['HTTP_CF_IPCOUNTRY'] ?? '';
+if (!$country || !in_array($country, $allowedCountries)) exit;
 
-// ASN datacenter block (org name)
+// ===================================================
+// ASN / DATACENTER FILTER (Cloudflare org)
+// ===================================================
+$org = strtolower($_SERVER['HTTP_CF_ORG'] ?? '');
 $dc = ['amazon','google','microsoft','ovh','digitalocean','linode','hetzner','vultr','contabo'];
-$org = strtolower($info['org'] ?? '');
-foreach ($dc as $d) if (strpos($org,$d)!==false) exit;
+foreach ($dc as $d) if (strpos($org, $d) !== false) exit;
 
-// ================= TRACKING =================
+// ===================================================
+// TRACKING (SubID + proxy EPC logic)
+// ===================================================
 $subid = hash('sha256', $ip.$ua);
 $stats = json_decode(file_get_contents($statsFile), true);
+
 if (!isset($stats[$subid])) {
-  $stats[$subid] = ['ip'=>$ip,'hits'=>0,'bad'=>0,'t'=>time()];
+    $stats[$subid] = ['ip'=>$ip,'hits'=>0,'bad'=>0,'t'=>time()];
 }
 $stats[$subid]['hits']++;
 
-// proxy “bad” logic: banyak klik, nol hasil internal
+// jika hits banyak tanpa hasil → tandai bad
 if ($stats[$subid]['hits'] >= $maxClicksNoResult) {
-  $stats[$subid]['bad']++;
-  if ($stats[$subid]['bad'] >= 2) {
-    $blocked[] = $ip;
-    file_put_contents($blockFile, json_encode(array_values(array_unique($blocked))));
-    file_put_contents($statsFile, json_encode($stats));
-    exit;
-  }
+    $stats[$subid]['bad']++;
+    if ($stats[$subid]['bad'] >= 2) {
+        $blocked[] = $ip;
+        file_put_contents($blockFile, json_encode(array_values(array_unique($blocked))));
+        file_put_contents($statsFile, json_encode($stats));
+        exit;
+    }
 }
 file_put_contents($statsFile, json_encode($stats));
 
-// ================= SMARTLINK ROTATION =================
+// ===================================================
+// SMARTLINK ROTATION + AUTO-PAUSE
+// ===================================================
 $links = json_decode(file_get_contents($linksFile), true);
 $available = array_values(array_filter($links['links'], fn($l)=>empty($l['paused'])));
 if (!$available) exit;
 
 $pick = $available[array_rand($available)];
+
+// hit count
 foreach ($links['links'] as &$l) {
-  if ($l['url']===$pick['url']) $l['hits']++;
+    if ($l['url'] === $pick['url']) $l['hits']++;
 }
-// auto‑pause if internal bad ratio tinggi
+
+// auto-pause jika rasio buruk
 foreach ($links['links'] as &$l) {
-  if ($l['hits'] >= 50 && ($l['bad']/$l['hits']) > 0.9) $l['paused'] = true;
+    if ($l['hits'] >= 50 && ($l['bad']/$l['hits']) > 0.9) {
+        $l['paused'] = true;
+    }
 }
 file_put_contents($linksFile, json_encode($links));
 
-// ================= RENDER LP + DELAY REDIRECT =================
+// ===================================================
+// RENDER LP + DELAY REDIRECT
+// ===================================================
 ?>
 <!doctype html>
 <html>
@@ -87,7 +114,10 @@ file_put_contents($linksFile, json_encode($links));
 </head>
 <body>
 <h1>Crypto Users Are Quietly Earning Daily Rewards</h1>
-<p>Early users are focusing on emerging crypto ecosystems that reward activity—not just capital. As adoption grows, early participation often benefits most.</p>
+<p>
+Early users are focusing on emerging crypto ecosystems that reward activity—not just capital.
+As adoption grows, early participation often benefits the most.
+</p>
 
 <script>
 setTimeout(function(){
