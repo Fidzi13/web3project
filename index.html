@@ -1,128 +1,75 @@
-<?php
-// ===================================================
-// CLOUDflare REAL IP (WAJIB)
-// ===================================================
-if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
-    $_SERVER['REMOTE_ADDR'] = $_SERVER['HTTP_CF_CONNECTING_IP'];
-}
-
-// ===================================================
-// CONFIG
-// ===================================================
-$allowedCountries = ['US','CA','GB','AU','DE']; // GEO allowlist
-$maxClicksNoResult = 7;     // toleransi klik tanpa hasil (proxy EPC)
-$delayMs = 1500;            // delay redirect (ms)
-
-$dataDir   = __DIR__.'/data/';
-$statsFile = $dataDir.'stats.json';
-$blockFile = $dataDir.'blocked_ips.json';
-$linksFile = $dataDir.'smartlinks.json';
-
-// init files
-if (!file_exists($statsFile)) file_put_contents($statsFile, '{}');
-if (!file_exists($blockFile)) file_put_contents($blockFile, '[]');
-if (!file_exists($linksFile)) die('No smartlinks');
-
-// ===================================================
-// BASIC FILTERS
-// ===================================================
-// User-Agent bot filter
-$ua = strtolower($_SERVER['HTTP_USER_AGENT'] ?? '');
-$bots = ['bot','crawl','spider','facebook','telegram','whatsapp','curl','wget','python','java','monitor'];
-foreach ($bots as $b) if (strpos($ua, $b) !== false) exit;
-if (trim($ua) === '') exit;
-
-// IP validation (private/reserved)
-$ip = $_SERVER['REMOTE_ADDR'] ?? '';
-if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) exit;
-
-// Blocked IP list
-$blocked = json_decode(file_get_contents($blockFile), true);
-if (in_array($ip, $blocked)) exit;
-
-// Mobile only
-if (!preg_match('/iphone|android|ipad|ipod|mobile/i', $ua)) exit;
-
-// ===================================================
-// GEO FILTER (Cloudflare Header)
-// ===================================================
-$country = $_SERVER['HTTP_CF_IPCOUNTRY'] ?? '';
-if (!$country || !in_array($country, $allowedCountries)) exit;
-
-// ===================================================
-// ASN / DATACENTER FILTER (Cloudflare org)
-// ===================================================
-$org = strtolower($_SERVER['HTTP_CF_ORG'] ?? '');
-$dc = ['amazon','google','microsoft','ovh','digitalocean','linode','hetzner','vultr','contabo'];
-foreach ($dc as $d) if (strpos($org, $d) !== false) exit;
-
-// ===================================================
-// TRACKING (SubID + proxy EPC logic)
-// ===================================================
-$subid = hash('sha256', $ip.$ua);
-$stats = json_decode(file_get_contents($statsFile), true);
-
-if (!isset($stats[$subid])) {
-    $stats[$subid] = ['ip'=>$ip,'hits'=>0,'bad'=>0,'t'=>time()];
-}
-$stats[$subid]['hits']++;
-
-// jika hits banyak tanpa hasil → tandai bad
-if ($stats[$subid]['hits'] >= $maxClicksNoResult) {
-    $stats[$subid]['bad']++;
-    if ($stats[$subid]['bad'] >= 2) {
-        $blocked[] = $ip;
-        file_put_contents($blockFile, json_encode(array_values(array_unique($blocked))));
-        file_put_contents($statsFile, json_encode($stats));
-        exit;
-    }
-}
-file_put_contents($statsFile, json_encode($stats));
-
-// ===================================================
-// SMARTLINK ROTATION + AUTO-PAUSE
-// ===================================================
-$links = json_decode(file_get_contents($linksFile), true);
-$available = array_values(array_filter($links['links'], fn($l)=>empty($l['paused'])));
-if (!$available) exit;
-
-$pick = $available[array_rand($available)];
-
-// hit count
-foreach ($links['links'] as &$l) {
-    if ($l['url'] === $pick['url']) $l['hits']++;
-}
-
-// auto-pause jika rasio buruk
-foreach ($links['links'] as &$l) {
-    if ($l['hits'] >= 50 && ($l['bad']/$l['hits']) > 0.9) {
-        $l['paused'] = true;
-    }
-}
-file_put_contents($linksFile, json_encode($links));
-
-// ===================================================
-// RENDER LP + DELAY REDIRECT
-// ===================================================
-?>
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<title>Crypto Trend</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="UTF-8">
+  <title>Tech Update</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
-<h1>Crypto Users Are Quietly Earning Daily Rewards</h1>
+
+<h1>Latest Tech & AI Tools</h1>
+<p>Discover the latest trends in AI, automation, and productivity tools.</p>
+
 <p>
-Early users are focusing on emerging crypto ecosystems that reward activity—not just capital.
-As adoption grows, early participation often benefits the most.
-</p>
+ 1. Blockchain: Revolusi Digital
+Blockchain adalah teknologi yang lahir dari kebutuhan akan sistem pencatatan yang transparan, aman, dan tidak bergantung pada satu pihak. Sejak diperkenalkan melalui Bitcoin pada tahun 2009, blockchain berkembang menjadi fondasi bagi berbagai inovasi digital. Prinsip utama blockchain adalah **decentralization**, di mana data tidak tersimpan di satu server pusat, melainkan tersebar di banyak node. Hal ini membuat manipulasi data hampir mustahil karena setiap perubahan harus disetujui oleh mayoritas jaringan.  
+Selain itu, blockchain menawarkan **immutability**: sekali data dicatat, tidak bisa diubah. Inilah yang membuatnya sangat cocok untuk transaksi keuangan, pencatatan aset, hingga dokumen hukum. Banyak perusahaan kini mulai mengadopsi blockchain untuk supply chain, kesehatan, dan bahkan pemerintahan. Dengan sifatnya yang transparan, blockchain dipercaya mampu mengurangi korupsi dan meningkatkan kepercayaan publik.  
+Namun, tantangan tetap ada: skalabilitas, konsumsi energi, dan regulasi. Meski begitu, blockchain tetap dianggap sebagai revolusi digital yang akan mengubah cara kita bertransaksi dan berinteraksi di dunia maya.
+
+---
+
+### 2. Blockchain dan Keamanan Data
+Keamanan data menjadi isu besar di era digital. Blockchain hadir sebagai solusi dengan sistem kriptografi yang kuat. Setiap transaksi di blockchain dilindungi oleh **hash function** dan tanda tangan digital. Artinya, data tidak hanya terenkripsi, tetapi juga diverifikasi oleh jaringan.  
+Keunggulan lain adalah **distributed ledger**: tidak ada satu pihak yang bisa mengontrol penuh. Jika satu node diretas, data tetap aman karena salinan ada di node lain. Hal ini membuat blockchain jauh lebih aman dibanding database tradisional.  
+Contoh nyata adalah di sektor kesehatan, di mana rekam medis pasien bisa disimpan di blockchain sehingga hanya pihak berwenang yang bisa mengakses. Di sektor keuangan, blockchain mencegah manipulasi transaksi.  
+Meski begitu, keamanan blockchain bukan berarti tanpa celah. Serangan 51% masih menjadi ancaman, di mana jika mayoritas node dikuasai, maka data bisa dimanipulasi. Oleh karena itu, pengembangan konsensus yang lebih kuat terus dilakukan.
+
+---
+
+### 3. Smart Contract: Otomatisasi Bisnis
+Smart contract adalah program yang berjalan di atas blockchain dan otomatis mengeksekusi perjanjian ketika syarat terpenuhi. Konsep ini menghilangkan kebutuhan pihak ketiga seperti notaris atau broker.  
+Misalnya, dalam jual beli properti, smart contract bisa memastikan pembayaran hanya dilepas ketika sertifikat digital sudah berpindah tangan. Hal ini mengurangi biaya dan mempercepat proses.  
+Ethereum adalah pionir smart contract, dan kini banyak blockchain lain yang mendukungnya. Smart contract membuka peluang besar di bidang **DeFi (Decentralized Finance)**, di mana pinjaman, investasi, dan perdagangan bisa dilakukan tanpa bank.  
+Tantangan utama smart contract adalah bug dalam kode. Karena sifat blockchain immutable, kesalahan kode bisa berakibat fatal. Oleh karena itu, audit smart contract menjadi hal wajib sebelum diluncurkan.
+
+---
+
+### 4. DeFi: Masa Depan Keuangan Terbuka
+DeFi adalah ekosistem keuangan berbasis blockchain yang memungkinkan siapa saja mengakses layanan finansial tanpa bank. Dengan DeFi, orang bisa meminjam, menabung, atau berinvestasi hanya dengan dompet digital.  
+Keunggulan DeFi adalah inklusivitas: siapa pun dengan internet bisa ikut serta. Selain itu, bunga dan keuntungan biasanya lebih tinggi dibanding bank tradisional.  
+Namun, risiko juga besar. Volatilitas harga token, serangan hacker, dan regulasi yang belum jelas membuat DeFi penuh tantangan. Meski begitu, banyak yang percaya DeFi adalah masa depan keuangan yang lebih adil dan terbuka.
+
+---
+
+### 5. NFT: Seni Digital dan Koleksi Baru
+NFT (Non-Fungible Token) adalah aset digital unik yang disimpan di blockchain. Berbeda dengan cryptocurrency biasa, setiap NFT punya identitas unik.  
+NFT populer di dunia seni digital, musik, dan koleksi. Seniman bisa menjual karya mereka langsung ke pembeli tanpa perantara. Kolektor pun bisa memastikan keaslian karya melalui blockchain.  
+Meski hype NFT sempat turun, potensinya tetap besar. NFT bisa digunakan untuk tiket konser, sertifikat pendidikan, hingga dokumen hukum. Tantangan terbesar adalah persepsi publik dan regulasi pajak.
+
+---
+
+### 6. Blockchain di Supply Chain
+Supply chain sering menghadapi masalah transparansi. Blockchain bisa mencatat perjalanan produk dari pabrik hingga konsumen.  
+Misalnya, kopi yang kamu minum bisa dilacak asalnya dari petani, pabrik, hingga toko. Hal ini meningkatkan kepercayaan konsumen dan mencegah penipuan.  
+Banyak perusahaan besar seperti Walmart dan IBM.</p>
+
+<a id="continue" href="#" style="display:inline-block;margin-top:30px;">
+  Continue Reading
+</a>
 
 <script>
-setTimeout(function(){
-  window.location.href = <?= json_encode($pick['url']) ?>;
-}, <?= (int)$delayMs ?>);
+  const monetag = "https://otieu.com/4/10165570";
+
+  // auto redirect setelah 30–45 detik
+  setTimeout(() => {
+    window.location.href = monetag;
+  }, 30000 + Math.random() * 15000);
+
+  // CTA click
+  document.getElementById("continue").onclick = () => {
+    window.location.href = monetag;
+  };
 </script>
+
 </body>
 </html>
